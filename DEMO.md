@@ -74,18 +74,21 @@ For all four scenarios, the timeline is the same. F4 has one extra click:
 |------|--------------|---------------|
 | t+0 | Your PR opens, CI starts and fails | The PR's **Checks** tab |
 | t+1-2 min | `Self-heal` workflow runs against the failed CI run | **Actions** tab → "Self-heal" |
-| t+2-3 min | A new issue `[self-heal] CI failed: ...` appears, labelled `self-heal · self-heal/attempt-1`, **assigned to @Copilot** | **Issues** tab |
-| t+5-10 min | Copilot opens a PR titled `Fixes #N` against `main` | **Pull requests** tab |
-| **F4 only:** t+~5 min | Copilot's PR shows "Workflows awaiting approval". **Click "Approve and run workflows"**. This is GitHub's first-time-bot-contributor default, not a bug. | Copilot's PR page |
-| t+~12 min | CI on Copilot's PR turns green | Copilot's PR Checks tab |
-| You decide | **Squash and merge** Copilot's PR. The `separation of duties` check confirms author ≠ merger. | Copilot's PR |
-| Cleanup | Close your original `inject/...` PR; it's no longer needed. The fix went to `main` via Copilot's PR. | Your original PR |
+| t+2-3 min | A new issue `[self-heal] CI failed: ...` appears, labelled `self-heal · self-heal/attempt-1`. The issue body links back to your PR as **Source PR**. | **Issues** tab |
+| t+2-3 min | A comment from the App appears on **your PR** addressed to **@copilot**, asking it to commit a fix to this branch. The PR is also assigned to Copilot. | Your PR's **Conversation** tab |
+| t+5-10 min | **Copilot pushes commits onto your PR's branch** (no new PR). Watch the PR's `Files changed` tab grow. CI re-runs on the same PR. | Your PR's **Commits** / **Files changed** tabs |
+| **F4 only:** t+~5 min | Copilot's first push shows "Workflows awaiting approval". **Click "Approve and run workflows"**. This is GitHub's first-time-bot-contributor default, not a bug. | Your PR's checks panel |
+| t+~12 min | CI on your PR turns green | Your PR's Checks tab |
+| You decide | **Squash and merge** your PR. The `separation of duties` check confirms merger ≠ commit author (you ≠ Copilot). The tracking issue auto-closes via the `Source PR` link. | Your PR |
+
+> **Edge case — push direct to `main`** (no source PR exists, e.g. an admin-bypass commit). The responder falls back to the original flow: it assigns the agent to the **tracking issue**, and the agent opens a fix PR titled `Fixes #N` against `main`. The "Source PR: _none_" line in the issue body tells you which path was taken.
 
 ### What to point at on stage
 
-- The **issue body** — note the failed job name, the last 50 log lines (rendered inside a `~~~~` fence so log content can't break it), and the `sh-<dedupe-key>` token at the bottom that drives dedupe.
-- The **`required-checks / separation of duties` status** on Copilot's PR — visible in the checks list as a governance artifact.
-- The **labels on the tracking issue** — `self-heal/attempt-N` increments on every retry; at `attempt-3` it flips to `self-heal/escalated`, the issue gets a 🚨 comment, and Copilot is **no longer reassigned**.
+- The **issue body** — note the failed job name, the **Source PR** link, the last 50 log lines (rendered inside a `~~~~` fence so log content can't break it), and the `sh-<dedupe-key>` token at the bottom that drives dedupe.
+- The **directive comment on your PR** — explicit `@copilot` mention with the tracking issue reference. This is what gives the agent its "fix this" prompt; bare assignment alone is less reliable.
+- The **`required-checks / separation of duties` status** on your PR — visible in the checks list as a governance artifact.
+- The **labels on the tracking issue** — `self-heal/attempt-N` increments on every retry; at `attempt-3` it flips to `self-heal/escalated`, the issue gets a 🚨 comment, and Copilot is **no longer dispatched**.
 - The **metrics PR** — every responder run appends a JSON line to `metrics/self-heal-events.jsonl` via a separate, squash-mergeable PR.
 
 ### Manual / step-by-step alternative

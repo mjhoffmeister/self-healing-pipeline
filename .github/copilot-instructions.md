@@ -46,18 +46,25 @@ docker build -t selfhealing-demo:local .
 - **Minimum permissions.** Each job declares its own `permissions:` block.
 - **Loop prevention.** Any new responder logic must guard `github.actor != 'copilot-swe-agent[bot]'`.
 
-## When the assigned issue is a CI failure
+## When you are dispatched against a CI failure
 
-1. Read the **Failed job** and **Last 50 log lines** in the issue body.
+You will be dispatched in one of two ways:
+
+- **Assigned to a pull request** (the common case). The tracking issue is linked from the PR comment that mentions `@copilot`, and from the **Source PR** line in the issue body. **Commit your fix directly to the PR's branch.** Do **not** open a new PR. Do **not** revert the PR's existing changes wholesale — keep the intended new code and fix only the regression.
+- **Assigned to a tracking issue** (fallback, when there is no source PR — e.g. a push went straight to `main`). In that case, open a single fix PR off `main` and reference the issue with `Fixes #N`.
+
+Either way:
+
+1. Read the **Failed job** and **Last 50 log lines** in the tracking issue body.
 2. Reproduce locally with the commands above.
 3. Make the smallest possible change to turn the failure green.
 4. **Do not** modify `self-heal.yml`, `required-checks.yml`, or `CODEOWNERS` unless the issue explicitly names them.
-5. Open a single PR. Reference the issue (`Fixes #N`). Keep the diff focused.
+5. Keep the diff focused.
 
 ## When the assigned issue is about the CI workflow itself (scenario F4)
 
 - Editing `.github/workflows/ci.yml` is allowed and expected.
-- After your PR opens, a maintainer must click **"Approve and run workflows"** before CI runs on it. This is normal and called out in `DEMO.md`.
+- After your first push, a maintainer must click **"Approve and run workflows"** before CI runs. This is normal and called out in `DEMO.md`.
 
 ## Forbidden
 

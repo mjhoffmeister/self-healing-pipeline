@@ -13,24 +13,40 @@ Built for platform / security / governance leaders evaluating Agentic DevOps. Co
 ```
 ┌──────────────┐ workflow_run ┌───────────────────┐ gh issue ┌───────────────┐
 │   ci.yml     │─── failure ─►│  self-heal.yml    │─────────►│ tracking issue│
-│ build/test/  │              │  (responder)      │          │ assigned to   │
-│ docker push  │              │                   │          │  @Copilot     │
-└──────────────┘              └─────────┬─────────┘          └──────┬────────┘
-                                        │                            │
-                                        │ if transient & attempt<2   │ Copilot
-                                        ▼                            │ cloud agent
-                            ┌──────────────────────┐                 ▼
-                            │ reRunWorkflowFailedJobs│       ┌────────────────┐
-                            └──────────────────────┘         │   fix PR       │
-                                                             │ Fixes #N       │
-                                                             └──────┬─────────┘
-                                                                    │
-                                          required-checks.yml ◄─────┤
-                                          (separation of duties)    │
-                                                                    ▼
-                                                             human reviewer
-                                                             clicks Squash & Merge
-                                                             — green main
+│ build/test/  │              │  (responder)      │          │ (records the  │
+│ docker push  │              │                   │          │  failure)     │
+└──────────────┘              └─────────┬─────────┘          └───────────────┘
+                                        │
+                                        │ if transient & attempt<2
+                                        ▼
+                            ┌────────────────────────┐
+                            │ reRunWorkflowFailedJobs│
+                            └────────────────────────┘
+                                        │
+                                        │ otherwise: dispatch to agent
+                                        ▼
+                            ┌──────────────────────────────┐
+                            │  source PR exists?           │
+                            │   yes → assign @copilot to   │
+                            │         the PR + post        │
+                            │         "fix this" comment   │
+                            │   no  → assign @copilot to   │
+                            │         the tracking issue   │
+                            │         (agent opens new PR) │
+                            └──────────────┬───────────────┘
+                                           │
+                                           ▼
+                                  Copilot pushes commits
+                                  onto the PR's branch
+                                  (or opens a fix PR in
+                                  the fallback case)
+                                           │
+                  required-checks.yml ◄────┤
+                  (separation of duties)   │
+                                           ▼
+                                    human reviewer
+                                    clicks Squash & Merge
+                                    — green main
 ```
 
 Hero artifact: [.github/workflows/self-heal.yml](.github/workflows/self-heal.yml).
@@ -105,9 +121,11 @@ pwsh ./scripts/reset-demo.ps1
    ```
    Or in the UI: **Settings → Actions → General → Workflow permissions** → "Read and write permissions" + "Allow GitHub Actions to create and approve pull requests". Without this, the metrics job fails with `GitHub Actions is not permitted to create or approve pull requests`.
 5. **Configure branch protection on `main`:** require 1 PR review, require status checks `build & test`, `docker build & publish`, `separation of duties`. Disallow force-push and self-approval. (For demo: leave admin-bypass on.)
-6. **Provision the `selfheal-orchestrator` GitHub App** with the irreducible-minimum permissions: **`issues:write`** + **`metadata:read`** (read-only metadata is mandatory for any App). No `pull_requests` scope, no `contents` scope. Install the App on this repo only. Then:
+6. **Provision the `selfheal-orchestrator` GitHub App** with the irreducible-minimum permissions: **`issues:write`** + **`pull_requests:write`** + **`metadata:read`** (read-only metadata is mandatory for any App). No `contents` scope. Install the App on this repo only. Then:
    - Store the public **App ID** as a repo **variable** `APP_ID` (variable, not secret — it's not sensitive).
    - Store the App's **RSA private key** (the `.pem` contents downloaded from the App settings page) as a repo **secret** `APP_PRIVATE_KEY`. This is the only long-lived secret in the system; it's used to sign a JWT each run, which is exchanged for a ~1-hour installation token.
+
+   `pull_requests:write` is required because the responder dispatches the cloud agent against the **source PR** when one exists (commits land on the PR's branch instead of opening a new PR off `main`). The `issues:write` scope still covers the fallback path (push direct to `main`) and the tracking-issue assignment + comments.
 
    **No PATs. No long-lived installation tokens** — those expire hourly so a stored one would inevitably become a PAT in disguise.
 7. **Enable the Copilot cloud agent** (formerly "Copilot coding agent") at the org or repo level (org policy must allow it). On a personal-account public repo this is on by default for eligible plan tiers.
@@ -123,7 +141,7 @@ pwsh ./scripts/reset-demo.ps1
 
 The plan calls for six functional + three negative tests. See [plan/PLAN.md](plan/PLAN.md) Phase 6. In summary:
 
-- F1/F2/F3/F4 each produce: issue → Copilot PR → green CI within ~10 min median.
+- F1/F2/F3/F4 each produce: issue → directive comment + assignment on the source PR → Copilot pushes commits onto the PR → green CI within ~10 min median.
 - 4 consecutive failures → circuit breaker fires, escalation label applied, no further Copilot assignment.
 - Bot-authored failing PR → responder skips (actor guard).
 - Bug in `self-heal.yml` itself → no self-heal occurs (the documented chicken-and-egg limit).

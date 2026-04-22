@@ -9,12 +9,13 @@
 **Commit:** `${HEAD_SHA}`
 **Run:** [#${RUN_NUMBER} (attempt ${RUN_ATTEMPT})](${RUN_URL})
 **Triggered by:** `${TRIGGERING_ACTOR}`
+${SOURCE_PR_LINE}
 
 ## Suggested actions
 
 - [ ] Reproduce locally (`dotnet test SelfHealingDemo.sln`).
 - [ ] If transient, comment `/self-heal retry` to re-run failed jobs once more.
-- [ ] If clearly a code defect, leave assignment to **@Copilot** in place.
+- [ ] If clearly a code defect, leave the **@copilot** assignment in place (on the source PR if one exists; otherwise on this issue).
 - [ ] If the responder workflow itself is at fault, **unassign Copilot** and tag CODEOWNERS — see chicken-and-egg note in `DEMO.md`.
 
 ## Last 50 log lines

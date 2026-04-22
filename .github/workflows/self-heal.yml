@@ -4,7 +4,9 @@
 #   1. classify       — fetch upstream logs/artifacts, decide transient vs. real
 #   2. retry-once     — if transient and attempt < 2, rerun failed jobs and stop
 #   3. open-or-update-issue — dedupe by (workflow, branch, failed_job) and file/update
-#   4. assign-copilot — hand the issue to the Copilot cloud agent (App token, not PAT)
+#   4. dispatch-to-agent — hand the work to the Copilot cloud agent (App token, not PAT).
+#                       Prefers the source PR (commits land on the PR's branch);
+#                       falls back to the tracking issue when no PR exists.
 #   5. circuit-breaker — after 3 attempts on the same branch, escalate to humans
 #
 # Loop-prevention: skip when the upstream run was triggered by the cloud agent itself.
@@ -44,11 +46,14 @@ jobs:
     permissions:
       actions: read
       contents: read
+      pull-requests: read
     outputs:
       transient: ${{ steps.detect.outputs.transient }}
       failed_job_name: ${{ steps.detect.outputs.failed_job_name }}
       log_tail_b64: ${{ steps.detect.outputs.log_tail_b64 }}
       dedupe_key: ${{ steps.detect.outputs.dedupe_key }}
+      source_pr_number: ${{ steps.detect.outputs.source_pr_number }}
+      source_pr_url: ${{ steps.detect.outputs.source_pr_url }}
     steps:
       - name: Inspect failed jobs and logs
         id: detect
@@ -105,10 +110,38 @@ jobs:
             const dedupeRaw = `${process.env.UPSTREAM_WORKFLOW_NAME}|${process.env.UPSTREAM_HEAD_BRANCH}|${failedName}`;
             const dedupeKey = crypto.createHash('sha1').update(dedupeRaw).digest('hex').slice(0, 12);
 
+            // Find the open PR whose head matches this branch. When present,
+            // the responder will dispatch the cloud agent against the PR
+            // (commits land on the PR's branch); when absent (e.g. push
+            // straight to main), the responder falls back to assigning the
+            // tracking issue.
+            let sourcePrNumber = '';
+            let sourcePrUrl = '';
+            try {
+              const prs = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                head: `${context.repo.owner}:${process.env.UPSTREAM_HEAD_BRANCH}`,
+                per_page: 5,
+              });
+              if (prs.data.length > 0) {
+                sourcePrNumber = String(prs.data[0].number);
+                sourcePrUrl = prs.data[0].html_url;
+                core.info(`Source PR resolved: #${sourcePrNumber}`);
+              } else {
+                core.info('No open PR found for this branch; will fall back to issue-assignment.');
+              }
+            } catch (err) {
+              core.warning(`PR lookup failed: ${err.message}`);
+            }
+
             core.setOutput('transient', String(transient));
             core.setOutput('failed_job_name', failedName);
             core.setOutput('log_tail_b64', Buffer.from(logTail, 'utf8').toString('base64'));
             core.setOutput('dedupe_key', dedupeKey);
+            core.setOutput('source_pr_number', sourcePrNumber);
+            core.setOutput('source_pr_url', sourcePrUrl);
 
   retry-once:
     name: retry once if transient
@@ -164,6 +197,8 @@ jobs:
           TRIGGERING_ACTOR: ${{ env.UPSTREAM_TRIGGERING_ACTOR }}
           DEDUPE_KEY: ${{ needs.classify.outputs.dedupe_key }}
           LOG_TAIL_B64: ${{ needs.classify.outputs.log_tail_b64 }}
+          SOURCE_PR_NUMBER: ${{ needs.classify.outputs.source_pr_number }}
+          SOURCE_PR_URL: ${{ needs.classify.outputs.source_pr_url }}
         run: |
           set -euo pipefail
           # Decode log tail safely — never expand vars from log content.
@@ -172,8 +207,16 @@ jobs:
           LOG_TAIL="$(printf '%s' "$LOG_TAIL_B64" | base64 -d)"
           export LOG_TAIL
 
+          # Render the conditional "Source PR" line outside envsubst (envsubst
+          # has no conditionals). Empty when no PR was found.
+          if [ -n "${SOURCE_PR_NUMBER}" ]; then
+            export SOURCE_PR_LINE="**Source PR:** [#${SOURCE_PR_NUMBER}](${SOURCE_PR_URL})"
+          else
+            export SOURCE_PR_LINE="**Source PR:** _none_ (push direct to main; agent will be assigned to this issue)"
+          fi
+
           # envsubst with an explicit allowlist — never substitute arbitrary $VAR from the log body.
-          ALLOWED='${WORKFLOW_NAME} ${FAILED_JOB_NAME} ${HEAD_BRANCH} ${HEAD_SHA} ${RUN_NUMBER} ${RUN_ATTEMPT} ${RUN_URL} ${TRIGGERING_ACTOR} ${DEDUPE_KEY} ${LOG_TAIL}'
+          ALLOWED='${WORKFLOW_NAME} ${FAILED_JOB_NAME} ${HEAD_BRANCH} ${HEAD_SHA} ${RUN_NUMBER} ${RUN_ATTEMPT} ${RUN_URL} ${TRIGGERING_ACTOR} ${DEDUPE_KEY} ${LOG_TAIL} ${SOURCE_PR_LINE}'
           envsubst "$ALLOWED" < .github/CI_FAILURE_TEMPLATE.md > /tmp/issue-body.md
           echo "body_path=/tmp/issue-body.md" >> "$GITHUB_OUTPUT"
 
@@ -255,9 +298,9 @@ jobs:
             echo "escalated=false" >> "$GITHUB_OUTPUT"
           fi
 
-  assign-copilot:
-    name: assign Copilot cloud agent
-    needs: open-or-update-issue
+  dispatch-to-agent:
+    name: dispatch to Copilot cloud agent
+    needs: [classify, open-or-update-issue]
     if: needs.open-or-update-issue.outputs.escalated == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -268,14 +311,18 @@ jobs:
       #   vars.APP_ID         — public GitHub App ID (a repo/org variable, NOT a secret)
       #   secrets.APP_PRIVATE_KEY — the App's RSA private key (.pem contents)
       # The action signs a JWT with the private key, exchanges it for an
-      # installation token narrowly scoped to the App's declared permissions
-      # (issues:write + metadata:read), and exposes it as steps.app_token.outputs.token.
+      # installation token narrowly scoped to the App's declared permissions.
       # The token expires automatically and never needs rotation.
+      #
+      # App permissions required:
+      #   - issues: write           (assign agent to tracking issue, post comments)
+      #   - pull_requests: write    (assign agent to source PR, post directive comment)
+      #   - metadata: read          (mandatory for any App)
       #
       # We DO NOT keep a long-lived fallback secret: installation tokens expire
       # hourly, so any "stored token" would have to be a PAT, which violates
       # the no-PATs rule. If the App isn't wired up, we fail loudly so the
-      # operator knows Copilot was not assigned.
+      # operator knows the agent was not dispatched.
       - name: Mint App installation token
         id: app_token
         uses: actions/create-github-app-token@67e27a7eb7db372a1c61a7f9bdab8699e9ee57f7 # v1.11.1
@@ -283,11 +330,13 @@ jobs:
           app-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Assign issue to Copilot
+      - name: Dispatch agent to source PR (preferred) or tracking issue (fallback)
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ needs.open-or-update-issue.outputs.issue_number }}
+          SOURCE_PR_NUMBER: ${{ needs.classify.outputs.source_pr_number }}
+          ATTEMPT_COUNT: ${{ needs.open-or-update-issue.outputs.attempt_count }}
         run: |
           set -euo pipefail
           # No checkout in this job (it has zero filesystem permissions), so
@@ -297,7 +346,23 @@ jobs:
           # The Copilot cloud agent's *display* login is "Copilot" but its
           # *actual* assignee handle is the bot login "copilot-swe-agent" —
           # passing "Copilot" to --add-assignee returns "'Copilot' not found".
-          gh issue edit "$ISSUE_NUMBER" --add-assignee copilot-swe-agent
+          ASSIGNEE="copilot-swe-agent"
+
+          if [ -n "${SOURCE_PR_NUMBER}" ]; then
+            # PR-targeted flow: assign the agent to the PR so its commits
+            # land on the PR's branch (no new branch off main). Bare
+            # assignment is less directive than a comment, so post both —
+            # the comment gives the agent an explicit "fix this" prompt.
+            echo "Dispatching agent to source PR #${SOURCE_PR_NUMBER} (attempt ${ATTEMPT_COUNT})"
+            gh pr edit "$SOURCE_PR_NUMBER" --add-assignee "$ASSIGNEE"
+            gh pr comment "$SOURCE_PR_NUMBER" --body "@copilot Self-heal tracking issue: #${ISSUE_NUMBER} (attempt ${ATTEMPT_COUNT}). CI is failing on this PR. Please commit a fix to this branch — do **not** open a new PR. See the tracking issue for the failed job, log tail, and dedupe key."
+            gh issue comment "$ISSUE_NUMBER" --body "Dispatched to @copilot via PR #${SOURCE_PR_NUMBER} (attempt ${ATTEMPT_COUNT}). Watch that PR for the fix."
+          else
+            # Fallback: no source PR (e.g. push direct to main). Assign the
+            # tracking issue and let the agent open a fix PR off main.
+            echo "No source PR; falling back to issue-assignment on #${ISSUE_NUMBER}"
+            gh issue edit "$ISSUE_NUMBER" --add-assignee "$ASSIGNEE"
+          fi
 
   metrics:
     name: emit metrics
