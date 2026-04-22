@@ -1,0 +1,7 @@
+# Enforce LF on text files so dotnet-format doesn't fight Windows checkouts.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary

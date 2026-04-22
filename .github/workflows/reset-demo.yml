@@ -1,0 +1,106 @@
+# Server-side demo reset.
+#
+# Triggered manually (workflow_dispatch) so a presenter can recover without a laptop.
+# Mirrors scripts/reset-demo.* but runs entirely on a hosted runner.
+
+name: reset-demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_tag:
+        description: "Tag to reset main to"
+        required: true
+        default: "demo-baseline"
+      confirm:
+        description: 'Type "RESET" to confirm — this force-pushes main.'
+        required: true
+        default: ""
+
+permissions: {}
+
+jobs:
+  reset:
+    name: reset to baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      packages: write
+      actions: write
+    steps:
+      - name: Confirm
+        run: |
+          if [ "${{ inputs.confirm }}" != "RESET" ]; then
+            echo "::error::Confirmation phrase missing. Type RESET to proceed."
+            exit 1
+          fi
+
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Close open self-heal issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label self-heal --state open --json number --jq '.[].number'); do
+            gh issue close "$n" --comment "Closed by reset-demo workflow." || true
+          done
+
+      - name: Delete copilot/* and self-heal/* branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --prune origin
+          for b in $(git branch -r | sed 's/^[[:space:]]*//' | awk '/^origin\/(copilot|self-heal)\// {sub(/^origin\//,""); print}'); do
+            git push origin --delete "$b" || true
+          done
+
+      - name: Prune ghcr.io demo image tags (keep latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          owner="${REPO%%/*}"
+          name="${REPO##*/}"
+          # Try user-scoped first, then org-scoped. Initialize scope before the
+          # conditional so it's always defined when used in the DELETE loop.
+          scope="users"
+          if ! versions="$(gh api "/users/$owner/packages/container/$name/versions" \
+              --jq '.[] | select(.metadata.container.tags | length > 0) | select((.metadata.container.tags | map(. == "latest") | any) | not) | .id' 2>/dev/null)"; then
+            scope="orgs"
+            versions="$(gh api "/orgs/$owner/packages/container/$name/versions" \
+              --jq '.[] | select(.metadata.container.tags | length > 0) | select((.metadata.container.tags | map(. == "latest") | any) | not) | .id' 2>/dev/null || true)"
+          fi
+          while IFS= read -r v; do
+            [ -z "$v" ] && continue
+            gh api -X DELETE "/$scope/$owner/packages/container/$name/versions/$v" || true
+          done <<<"${versions:-}"
+
+      - name: Reset main to baseline tag
+        env:
+          BASELINE_TAG: ${{ inputs.baseline_tag }}
+        run: |
+          set -euo pipefail
+          if ! git tag --list "$BASELINE_TAG" | grep -qx "$BASELINE_TAG"; then
+            echo "::error::Tag '$BASELINE_TAG' not found."
+            exit 1
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git reset --hard "$BASELINE_TAG"
+          : > metrics/self-heal-events.jsonl
+          if [ -n "$(git status --porcelain metrics/self-heal-events.jsonl)" ]; then
+            git add metrics/self-heal-events.jsonl
+            git commit -m "chore(reset): clear self-heal metrics"
+          fi
+          git push origin main --force-with-lease

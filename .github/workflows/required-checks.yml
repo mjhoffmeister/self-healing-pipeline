@@ -1,0 +1,46 @@
+# Separation-of-duties enforcement.
+#
+# Asserts that the PR author is not the same identity that merges the PR.
+# Runs as a required status check on every PR. For Copilot PRs this is
+# trivially satisfied (the agent cannot click Merge). The value is that the
+# rule is *visible* in the checks list as a governance artifact, and prevents
+# a future human author from merging their own PR even if branch protection
+# is misconfigured.
+#
+# Demo-safe: this check passes pre-merge (the PR has no `merged_by` yet) and
+# only blocks if a manual override of branch protection ever lets an author
+# self-merge. It never blocks a solo presenter from merging Copilot's PR.
+
+name: required-checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  separation-of-duties:
+    name: separation of duties
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Author ≠ merger invariant
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          set -euo pipefail
+          echo "Author:    ${PR_AUTHOR}"
+          echo "Merged:    ${PR_MERGED:-false}"
+          echo "Merged by: ${PR_MERGED_BY:-<not yet merged>}"
+
+          if [ "${PR_MERGED:-false}" = "true" ] && [ -n "${PR_MERGED_BY:-}" ] && [ "${PR_AUTHOR}" = "${PR_MERGED_BY}" ]; then
+            echo "::error::Separation-of-duties violation: ${PR_AUTHOR} authored AND merged this PR."
+            exit 1
+          fi
+
+          echo "OK — separation-of-duties invariant holds."

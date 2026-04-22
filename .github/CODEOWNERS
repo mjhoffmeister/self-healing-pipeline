@@ -1,0 +1,28 @@
+# CODEOWNERS — required reviewers for governance-sensitive paths.
+#
+# !!! REPLACE THE PLACEHOLDERS BELOW BEFORE PUSHING !!!
+# GitHub will silently ignore this entire file if any team handle is invalid,
+# which would disable CODEOWNERS-required review across the repo.
+# Replace every @your-org/<team> with a real org/team handle, then verify on
+# the GitHub UI under Settings → Code owners that the file parses cleanly.
+#
+# The responder workflow MUST have stricter ownership than app code; see
+# DEMO.md (chicken-and-egg limit) for why.
+
+# Default owner for everything not otherwise specified.
+*                                @your-org/platform-team
+
+# CI / responder pipelines — stricter review required.
+/.github/workflows/              @your-org/platform-team @your-org/security-team
+/.github/workflows/self-heal.yml @your-org/platform-team @your-org/security-team
+/.github/workflows/required-checks.yml @your-org/platform-team @your-org/security-team
+
+# Issue templates and agent guidance — governance-relevant.
+/.github/CI_FAILURE_TEMPLATE.md  @your-org/platform-team
+/.github/copilot-instructions.md @your-org/platform-team
+
+# Reset tooling — solo presenters depend on this; protect it.
+/scripts/                        @your-org/platform-team
+
+# Demo narration — ok for any maintainer to update.
+/DEMO.md                         @your-org/platform-team
