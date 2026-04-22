@@ -109,8 +109,14 @@ See DEMO.md for the full timeline.
 EOF
 
 if [ "$dry_run" -eq 1 ]; then
+  printf '    \033[90mgh label create demo|self-heal-injection --force (cosmetic, idempotent)\033[0m\n'
   printf '    \033[90mgh pr create --title "demo: %s injection" --body-file <tmp> --label demo --label self-heal-injection\033[0m\n' "$scenario"
 else
+  # Ensure cosmetic labels exist (idempotent). They are not required by any
+  # workflow; they only help filter demo PRs in the GitHub UI.
+  gh label create demo --color BFD4F2 --description "Demo / presentation artefact" --force >/dev/null
+  gh label create self-heal-injection --color D73A4A --description "Deliberately broken to exercise the self-heal loop" --force >/dev/null
+
   gh pr create \
     --title "demo: ${scenario} injection" \
     --body-file "$body_file" \

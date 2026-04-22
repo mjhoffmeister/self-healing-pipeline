@@ -137,9 +137,15 @@ See DEMO.md for the full timeline.
 "@
 
 if ($DryRun) {
+    Write-Host "    gh label create demo|self-heal-injection --force (cosmetic, idempotent)" -ForegroundColor DarkGray
     Write-Host "    gh pr create --title `"$prTitle`" --body <...> --label demo,self-heal-injection" -ForegroundColor DarkGray
 }
 else {
+    # Ensure cosmetic labels exist (idempotent). They are not required by any
+    # workflow; they only help filter demo PRs in the GitHub UI.
+    & gh label create demo --color BFD4F2 --description "Demo / presentation artefact" --force | Out-Null
+    & gh label create self-heal-injection --color D73A4A --description "Deliberately broken to exercise the self-heal loop" --force | Out-Null
+
     $tmp = New-TemporaryFile
     Set-Content -Path $tmp -Value $prBody -NoNewline
     try {
