@@ -177,6 +177,19 @@ jobs:
           envsubst "$ALLOWED" < .github/CI_FAILURE_TEMPLATE.md > /tmp/issue-body.md
           echo "body_path=/tmp/issue-body.md" >> "$GITHUB_OUTPUT"
 
+      - name: Ensure self-heal labels exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Idempotent — `--force` updates colour/description if the label already
+          # exists, otherwise creates it. Without these, `gh issue create --label`
+          # fails on a fresh repo with "could not add label: '<name>' not found".
+          gh label create self-heal              --color 0E8A16 --description "Tracking issue opened by the self-heal responder"        --force
+          gh label create self-heal/attempt-1    --color FBCA04 --description "Self-heal: 1st auto-recovery attempt"                    --force
+          gh label create self-heal/attempt-2    --color FBCA04 --description "Self-heal: 2nd auto-recovery attempt"                    --force
+          gh label create self-heal/escalated    --color B60205 --description "Self-heal: circuit breaker tripped — human review needed" --force
+
       - name: Upsert issue + manage attempt labels + circuit breaker
         id: upsert
         env:
