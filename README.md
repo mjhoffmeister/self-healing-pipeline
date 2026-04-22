@@ -97,14 +97,27 @@ pwsh ./scripts/reset-demo.ps1
    git push origin demo-baseline
    ```
 3. **Replace `@your-org/*` placeholders** in `.github/CODEOWNERS`.
-4. **Configure branch protection on `main`:** require 1 PR review, require status checks `build & test`, `docker build & publish`, `separation of duties`. Disallow force-push and self-approval. (For demo: leave admin-bypass on.)
-5. **Provision the `selfheal-orchestrator` GitHub App** with the irreducible-minimum permissions: **`issues:write`** + **`metadata:read`** (read-only metadata is mandatory for any App). No `pull_requests` scope, no `contents` scope. Install the App on this repo only. Then:
+4. **Configure repo Actions permissions.** The responder pushes a `metrics/` PR and the CI workflow pushes images to `ghcr.io`, so:
+   ```powershell
+   gh api -X PUT /repos/<owner>/<repo>/actions/permissions/workflow `
+     -f default_workflow_permissions=write `
+     -F can_approve_pull_request_reviews=true
+   ```
+   Or in the UI: **Settings → Actions → General → Workflow permissions** → "Read and write permissions" + "Allow GitHub Actions to create and approve pull requests". Without this, the metrics job fails with `GitHub Actions is not permitted to create or approve pull requests`.
+5. **Configure branch protection on `main`:** require 1 PR review, require status checks `build & test`, `docker build & publish`, `separation of duties`. Disallow force-push and self-approval. (For demo: leave admin-bypass on.)
+6. **Provision the `selfheal-orchestrator` GitHub App** with the irreducible-minimum permissions: **`issues:write`** + **`metadata:read`** (read-only metadata is mandatory for any App). No `pull_requests` scope, no `contents` scope. Install the App on this repo only. Then:
    - Store the public **App ID** as a repo **variable** `APP_ID` (variable, not secret — it's not sensitive).
    - Store the App's **RSA private key** (the `.pem` contents downloaded from the App settings page) as a repo **secret** `APP_PRIVATE_KEY`. This is the only long-lived secret in the system; it's used to sign a JWT each run, which is exchanged for a ~1-hour installation token.
 
    **No PATs. No long-lived installation tokens** — those expire hourly so a stored one would inevitably become a PAT in disguise.
-6. **Enable the Copilot cloud agent** (formerly "Copilot coding agent") at the org or repo level (org policy must allow it).
-7. **Verify SHA pins.** Each `uses:` line in `ci.yml`, `reset-demo.yml`, and `required-checks.yml` is pinned by full commit SHA with a trailing `# vX.Y.Z` comment. Re-verify against the upstream release tag before going live; let Dependabot bump them thereafter.
+7. **Enable the Copilot cloud agent** (formerly "Copilot coding agent") at the org or repo level (org policy must allow it). On a personal-account public repo this is on by default for eligible plan tiers.
+
+   Verify the agent is assignable on this repo with:
+   ```powershell
+   gh api graphql -f query='query { repository(owner:"<owner>", name:"<repo>") { suggestedActors(capabilities:[CAN_BE_ASSIGNED], first:25) { nodes { login __typename } } } }'
+   ```
+   You should see a `Bot` node with `login: "copilot-swe-agent"`. **Important quirk:** the agent's display name is `Copilot` but its actual assignment handle is `copilot-swe-agent` — the responder workflow already uses the correct handle, but if you ever assign by hand, use `gh issue edit <N> --add-assignee copilot-swe-agent`.
+8. **Verify SHA pins.** Each `uses:` line in `ci.yml`, `reset-demo.yml`, and `required-checks.yml` is pinned by full commit SHA with a trailing `# vX.Y.Z` comment. Re-verify against the upstream release tag before going live; let Dependabot bump them thereafter.
 
 ## Verification
 
