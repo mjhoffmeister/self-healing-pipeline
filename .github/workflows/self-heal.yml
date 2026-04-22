@@ -286,9 +286,13 @@ jobs:
       - name: Assign issue to Copilot
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ needs.open-or-update-issue.outputs.issue_number }}
         run: |
           set -euo pipefail
+          # No checkout in this job (it has zero filesystem permissions), so
+          # gh's git-based repo auto-detection fails. GH_REPO tells gh which
+          # repo to act on without needing a working tree.
           gh issue edit "$ISSUE_NUMBER" --add-assignee Copilot
 
   metrics:
@@ -348,6 +352,11 @@ jobs:
           fi
           git commit -m "chore(metrics): self-heal event for run ${UPSTREAM_RUN_ID}"
           git push origin "$branch"
+          # Ensure the cosmetic `metrics` label exists. `self-heal` is already
+          # created by the open-or-update-issue job; recreate it here as well
+          # in case this metrics job runs first on a future failure path.
+          gh label create self-heal --color 0E8A16 --description "Tracking issue opened by the self-heal responder" --force
+          gh label create metrics   --color C5DEF5 --description "Automated metrics append PR"                       --force
           gh pr create \
             --base main \
             --head "$branch" \
