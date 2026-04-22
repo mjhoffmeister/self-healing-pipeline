@@ -8,7 +8,7 @@ public static class GreetingService
     public static string Greet(string? name)
     {
         var trimmed = string.IsNullOrWhiteSpace(name) ? "world" : name.Trim();
-        return $"Hello, {trimmed}!";
+        return $"Helo, {trimmed}!";
     }
 
     public static int Add(int a, int b) => a + b;
