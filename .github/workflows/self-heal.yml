@@ -115,9 +115,16 @@ jobs:
             // (commits land on the PR's branch); when absent (e.g. push
             // straight to main), the responder falls back to assigning the
             // tracking issue.
+            //
+            // Race-condition note: the demo wrapper does `git push` (which
+            // can fire CI) BEFORE `gh pr create`. If CI fails before the PR
+            // is opened, the first lookup will return zero. We retry once
+            // after a short delay to absorb that gap; if still empty we
+            // legitimately have no source PR (push direct to main, or PR
+            // genuinely not opened yet) and fall through to the issue path.
             let sourcePrNumber = '';
             let sourcePrUrl = '';
-            try {
+            const lookupPr = async () => {
               const prs = await github.rest.pulls.list({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -125,9 +132,18 @@ jobs:
                 head: `${context.repo.owner}:${process.env.UPSTREAM_HEAD_BRANCH}`,
                 per_page: 5,
               });
-              if (prs.data.length > 0) {
-                sourcePrNumber = String(prs.data[0].number);
-                sourcePrUrl = prs.data[0].html_url;
+              return prs.data;
+            };
+            try {
+              let prs = await lookupPr();
+              if (prs.length === 0 && process.env.UPSTREAM_HEAD_BRANCH !== 'main') {
+                core.info('No PR found on first lookup; retrying after 10s to absorb push/PR-create race...');
+                await new Promise(r => setTimeout(r, 10_000));
+                prs = await lookupPr();
+              }
+              if (prs.length > 0) {
+                sourcePrNumber = String(prs[0].number);
+                sourcePrUrl = prs[0].html_url;
                 core.info(`Source PR resolved: #${sourcePrNumber}`);
               } else {
                 core.info('No open PR found for this branch; will fall back to issue-assignment.');
@@ -355,8 +371,27 @@ jobs:
             # the comment gives the agent an explicit "fix this" prompt.
             echo "Dispatching agent to source PR #${SOURCE_PR_NUMBER} (attempt ${ATTEMPT_COUNT})"
             gh pr edit "$SOURCE_PR_NUMBER" --add-assignee "$ASSIGNEE"
+
+            # Append `Fixes #<issue>` to the PR body so the tracking issue
+            # auto-closes when the PR merges. Idempotent: skip if the body
+            # already contains a closing keyword for this issue. Without
+            # this the SDLC trail leaks — tracking issues would pile up
+            # forever, defeating the dedupe-and-escalate logic.
+            CURRENT_BODY="$(gh pr view "$SOURCE_PR_NUMBER" --json body --jq .body)"
+            if ! printf '%s' "$CURRENT_BODY" | grep -qiE "(fixes|closes|resolves) #${ISSUE_NUMBER}([^0-9]|$)"; then
+              {
+                printf '%s\n\n---\n_Self-heal: Fixes #%s_\n' "$CURRENT_BODY" "$ISSUE_NUMBER"
+              } | gh pr edit "$SOURCE_PR_NUMBER" --body-file -
+              echo "Appended 'Fixes #${ISSUE_NUMBER}' to PR body."
+            else
+              echo "PR body already references issue #${ISSUE_NUMBER}; not re-appending."
+            fi
+
             gh pr comment "$SOURCE_PR_NUMBER" --body "@copilot Self-heal tracking issue: #${ISSUE_NUMBER} (attempt ${ATTEMPT_COUNT}). CI is failing on this PR. Please commit a fix to this branch — do **not** open a new PR. See the tracking issue for the failed job, log tail, and dedupe key."
-            gh issue comment "$ISSUE_NUMBER" --body "Dispatched to @copilot via PR #${SOURCE_PR_NUMBER} (attempt ${ATTEMPT_COUNT}). Watch that PR for the fix."
+            # Back-link comment on the issue. Deliberately writes "Copilot"
+            # without the @-mention to avoid cross-triggering the agent on
+            # the issue itself — the agent should only act on the PR.
+            gh issue comment "$ISSUE_NUMBER" --body "Dispatched to Copilot via PR #${SOURCE_PR_NUMBER} (attempt ${ATTEMPT_COUNT}). Watch that PR for the fix."
           else
             # Fallback: no source PR (e.g. push direct to main). Assign the
             # tracking issue and let the agent open a fix PR off main.

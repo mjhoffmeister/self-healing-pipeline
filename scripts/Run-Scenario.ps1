@@ -11,7 +11,8 @@
       5. gh pr create
 
     After this exits, the responder workflow takes over server-side: a tracking
-    issue appears within ~2 min, Copilot is assigned, and a fix PR follows.
+    issue appears within ~2 min, then Copilot is dispatched against THIS PR
+    (commits land on this branch, not a new PR off main).
 
     Use -DryRun to see what would happen without touching the remote.
     Use -SkipVerify to skip the pre-flight (e.g. for re-runs while iterating).
@@ -127,11 +128,12 @@ $prBody = @"
 Automated demo injection of scenario **$Scenario**.
 
 CI is expected to fail. Within ~2 min, the self-heal responder will:
-1. Open a tracking issue labelled ``self-heal``.
-2. Assign it to **@Copilot**.
-3. Copilot opens a fix PR titled ``Fixes #N``.
+1. Open a tracking issue labelled ``self-heal`` (with this PR linked as **Source PR**).
+2. Append ``Fixes #N`` to this PR's body so the issue auto-closes on merge.
+3. Assign **@Copilot** to this PR and post an ``@copilot`` directive comment asking it to commit a fix to this branch.
+4. Copilot pushes commits onto this branch (no new PR). Watch the **Commits** tab.
 
-When the fix PR's CI is green, squash-merge it (the separation-of-duties check confirms author ≠ merger). Then close this PR.
+When CI on this PR turns green, squash-merge it (the separation-of-duties check confirms author ≠ merger; the tracking issue closes automatically).
 
 See DEMO.md for the full timeline.
 "@
@@ -158,6 +160,6 @@ else {
 }
 
 Write-Host ""
-Step "Done. Watch for the tracking issue and Copilot's fix PR."
+Step "Done. Watch for the tracking issue, then Copilot's commits on this PR."
 Write-Host "  gh issue list --label self-heal --state open"
-Write-Host "  gh pr list --state open"
+Write-Host "  gh pr view --web"
