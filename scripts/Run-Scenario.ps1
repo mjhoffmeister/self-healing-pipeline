@@ -102,7 +102,7 @@ else {
 
 # Confirm exactly one file changed
 if (-not $DryRun) {
-    $changed = (git diff --name-only) -split "`n" | Where-Object { $_ }
+    $changed = @((git diff --name-only) -split "`n" | Where-Object { $_ })
     if ($changed.Count -ne 1) {
         throw "Expected exactly one changed file after injection, got $($changed.Count): $($changed -join ', ')"
     }
