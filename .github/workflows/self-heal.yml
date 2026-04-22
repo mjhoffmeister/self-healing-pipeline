@@ -293,7 +293,11 @@ jobs:
           # No checkout in this job (it has zero filesystem permissions), so
           # gh's git-based repo auto-detection fails. GH_REPO tells gh which
           # repo to act on without needing a working tree.
-          gh issue edit "$ISSUE_NUMBER" --add-assignee Copilot
+          #
+          # The Copilot cloud agent's *display* login is "Copilot" but its
+          # *actual* assignee handle is the bot login "copilot-swe-agent" —
+          # passing "Copilot" to --add-assignee returns "'Copilot' not found".
+          gh issue edit "$ISSUE_NUMBER" --add-assignee copilot-swe-agent
 
   metrics:
     name: emit metrics
