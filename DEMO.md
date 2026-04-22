@@ -62,7 +62,7 @@ Use this to confirm the injection did what you expected (`git diff --stat` shoul
 | Scenario | File touched | Effective change | First CI step that fails |
 |----------|--------------|------------------|--------------------------|
 | **F1** | `src/Api/GreetingService.cs` | Inserts a tab + trailing whitespace inside `Greet()` | `Verify formatting` (`dotnet format --verify-no-changes`) |
-| **F2** | `src/Api/GreetingService.cs` | Replaces `"Hello, {trimmed}!"` → `"Helo, {trimmed}!"` | `Test` (xUnit theories fail) |
+| **F2** | `src/Api/GreetingService.cs` | Adds a new `GreetFormal()` method **and** introduces a typo regression (`"Hello, ..."` → `"Helo, ..."`) in existing `Greet()`. The agent must keep the new method while fixing only the regression — it can't just `git revert`. | `Test` (xUnit theories on `Greet` fail) |
 | **F3** | `Dockerfile` | `ARG DOTNET_SDK_VERSION=10.0` → `99.0-does-not-exist` | `docker build & publish` (image pull fails) |
 | **F4** | `.github/workflows/ci.yml` | `DOTNET_VERSION: "10.0.x"` → `"99.0.x"` | `Setup .NET` (no matching SDK) |
 

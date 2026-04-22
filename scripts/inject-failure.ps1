@@ -55,9 +55,24 @@ switch ($Scenario) {
         }
     }
     'F2' {
-        # Failing unit test from a code typo: change "Hello, " to "Helo, ".
+        # Realistic scenario: developer adds a new public method (`GreetFormal`)
+        # AND accidentally introduces a typo regression in the existing `Greet`.
+        # The cloud agent must KEEP the new method while fixing only the
+        # regression — it cannot just `git revert` the file.
         Edit-File 'src/Api/GreetingService.cs' {
-            param($c) $c -replace '"Hello, \{trimmed\}!"', '"Helo, {trimmed}!"'
+            param($c)
+            $step1 = $c -replace '"Hello, \{trimmed\}!"', '"Helo, {trimmed}!"'
+            if ($step1 -eq $c) { throw 'F2 step 1 (typo) produced no change' }
+            $step2 = $step1 -replace
+                '(\r?\n)    public static int Add\(int a, int b\) =>',
+                ('$1    public static string GreetFormal(string? name)$1' +
+                 '    {$1' +
+                 '        var trimmed = string.IsNullOrWhiteSpace(name) ? "world" : name.Trim();$1' +
+                 '        return $"Good day, {trimmed}.";$1' +
+                 '    }$1' +
+                 '$1    public static int Add(int a, int b) =>')
+            if ($step2 -eq $step1) { throw 'F2 step 2 (new method insert) produced no change' }
+            $step2
         }
     }
     'F3' {

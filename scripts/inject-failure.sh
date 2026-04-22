@@ -39,8 +39,32 @@ PY
     require_change src/Api/GreetingService.cs
     ;;
   F2)
-    sed -i.bak 's/"Hello, {trimmed}!"/"Helo, {trimmed}!"/' src/Api/GreetingService.cs
-    rm -f src/Api/GreetingService.cs.bak
+    # Realistic scenario: developer adds a new public method (`GreetFormal`)
+    # AND accidentally introduces a typo regression in the existing `Greet`.
+    # The cloud agent must KEEP the new method while fixing only the
+    # regression — it cannot just `git revert` the file.
+    python3 - <<'PY'
+import io
+p = "src/Api/GreetingService.cs"
+s = open(p, "r", encoding="utf-8").read()
+old_typo = '"Hello, {trimmed}!"'
+new_typo = '"Helo, {trimmed}!"'
+if old_typo not in s:
+    raise SystemExit("F2 step 1: target literal not found")
+s = s.replace(old_typo, new_typo, 1)
+anchor = "\n    public static int Add(int a, int b) =>"
+insert = (
+    "\n    public static string GreetFormal(string? name)"
+    "\n    {"
+    "\n        var trimmed = string.IsNullOrWhiteSpace(name) ? \"world\" : name.Trim();"
+    "\n        return $\"Good day, {trimmed}.\";"
+    "\n    }\n"
+)
+if anchor not in s:
+    raise SystemExit("F2 step 2: Add() anchor not found")
+s = s.replace(anchor, insert + anchor, 1)
+open(p, "w", encoding="utf-8", newline="").write(s)
+PY
     require_change src/Api/GreetingService.cs
     ;;
   F3)
